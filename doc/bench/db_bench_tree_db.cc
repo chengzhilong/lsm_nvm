@@ -38,7 +38,7 @@ static const char* FLAGS_benchmarks =
     ;
 
 // Number of key/values to place in database
-static int FLAGS_num = 1000000;
+static uint64_t FLAGS_num = 1000000;
 
 // Number of read operations to do.  If negative, do FLAGS_num reads.
 static int FLAGS_reads = -1;
@@ -133,7 +133,7 @@ class Benchmark {
  private:
   kyotocabinet::TreeDB* db_;
   int db_num_;
-  int num_;
+  uint64_t num_;
   int reads_;
   double start_;
   double last_op_finish_;

@@ -185,6 +185,7 @@ private:
     int next_report_;
     int64_t bytes_;
     double last_op_finish_;
+	double last_gb_finish_;
     Histogram hist_;
     std::string message_;
 
@@ -201,6 +202,7 @@ public:
         start_ = Env::Default()->NowMicros();
         finish_ = start_;
         message_.clear();
+		last_gb_finish_ = start_;
     }
 
     void Merge(const Stats& other) {
@@ -255,6 +257,21 @@ public:
     void AddBytes(int64_t n) {
         bytes_ += n;
     }
+
+	void PerGBReport(int i) {
+		std::string extra;
+
+		uint64_t unit = 1024;
+		double now = Env::Default()->NowMicros();
+		double elapsed = (now - last_gb_finish_) * 1e-6;
+		char rate[100];
+		snprintf(rate, sizeof(rate), "%dGB %6.1f MB/s", i, (unit * 1.0) / elapsed);
+		extra = rate;
+
+		fprintf(stdout, "every_gb %s\n", extra.c_str());
+
+		last_gb_finish_ = now;
+	}
 
     void Report(const Slice& name) {
         // Pretend at least one op was done in case we are running a benchmark
@@ -324,7 +341,7 @@ private:
     Cache* cache_;
     const FilterPolicy* filter_policy_;
     DB* db_;
-    int num_;
+    uint64_t num_;
     int value_size_;
     int entries_per_batch_;
     WriteOptions write_options_;
@@ -338,7 +355,7 @@ private:
         fprintf(stdout, "Values:     %d bytes each (%d bytes after compression)\n",
                 FLAGS_value_size,
                 static_cast<int>(FLAGS_value_size * FLAGS_compression_ratio + 0.5));
-        fprintf(stdout, "Entries:    %d\n", num_);
+        fprintf(stdout, "Entries:    %lu\n", num_);
         fprintf(stdout, "RawSize:    %.1f MB (estimated)\n",
                 ((static_cast<int64_t>(kKeySize + FLAGS_value_size) * num_)
                         / 1048576.0));
@@ -751,7 +768,7 @@ private:
     void DoWrite(ThreadState* thread, bool seq) {
         if (num_ != FLAGS_num) {
             char msg[100];
-            snprintf(msg, sizeof(msg), "(%d ops)", num_);
+            snprintf(msg, sizeof(msg), "(%lu ops)", num_);
             thread->stats.AddMessage(msg);
         }
 
@@ -765,7 +782,9 @@ private:
         WriteBatch batch;
         Status s;
         int64_t bytes = 0;
-        for (int i = 0; i < num_; i += entries_per_batch_) {
+		uint64_t per = 1024;
+		uint64_t per_gb_num = per * 1024 * 1024 / value_size_ - 1;
+        for (uint64_t i = 0; i < num_; i += entries_per_batch_) {
             batch.Clear();
             for (int j = 0; j < entries_per_batch_; j++) {
                 const int k = seq ? i+j : (thread->rand.Next() % FLAGS_num);
@@ -781,6 +800,11 @@ private:
                 fprintf(stderr, "put error: %s\n", s.ToString().c_str());
                 exit(1);
             }
+
+			if (i % per_gb_num == 0) {
+				int tmp = i / per_gb_num;
+				thread->stats.PerGBReport(tmp);
+			}
 
 #if defined(_SIMULATE_FAILURE)
             //We simulate failure by exiting half-way mark
@@ -1031,6 +1055,7 @@ int main(int argc, char** argv) {
         double d;
         int n;
         char junk;
+		uint64_t nums;
         if (leveldb::Slice(argv[i]).starts_with("--benchmarks=")) {
             FLAGS_benchmarks = argv[i] + strlen("--benchmarks=");
         }
@@ -1045,8 +1070,8 @@ int main(int argc, char** argv) {
         } else if (sscanf(argv[i], "--reuse_logs=%d%c", &n, &junk) == 1 &&
                 (n == 0 || n == 1)) {
             FLAGS_reuse_logs = n;
-        } else if (sscanf(argv[i], "--num=%d%c", &n, &junk) == 1) {
-            FLAGS_num = n;
+        } else if (sscanf(argv[i], "--num=%lu%c", &nums, &junk) == 1) {
+            FLAGS_num = nums;
         } else if (sscanf(argv[i], "--reads=%d%c", &n, &junk) == 1) {
             FLAGS_reads = n;
         } else if (sscanf(argv[i], "--threads=%d%c", &n, &junk) == 1) {
